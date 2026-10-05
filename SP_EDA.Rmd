@@ -1,0 +1,176 @@
+---
+title: "SP_EDA"
+author: "Sebastian Pantzer"
+date: "2026-10-01"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+
+
+```
+
+```{r}
+
+data2 <- read_csv("SP_Data.csv")
+
+```
+
+```{r}
+#Look at top reasons
+data2|>
+  group_by(`Dispatch Reason (eDispatch.01)`)|>
+  summarise(n = n())|>
+  ungroup()|>
+  arrange(desc(n))|>
+  slice_head(n = 10)
+
+#want to group by every month of every year
+dates <- data2 |>
+  mutate(
+    date = mdy_hms(`Incident Date Time`),
+    `mm/yyyy` = format(date, "%m/%Y"),
+    month = my(`mm/yyyy`),
+    season = case_when(
+      month(date) %in% c(12, 1, 2, 3) ~ (year(date) - 2021) * 4 + 1,
+      month(date) %in% c(4, 5) ~ (year(date) - 2021) * 4 + 2,
+      month(date) %in% c(6, 7, 8) ~ (year(date) - 2021) * 4 + 3,
+      month(date) %in% c(9, 10, 11) ~ (year(date) - 2021) * 4 + 4
+    ),
+    season_label = case_when(
+      month(date) %in% c(12, 1, 2, 3) ~ paste("Winter", year(date)),
+      month(date) %in% c(4, 5) ~ paste("Spring", year(date)),
+      month(date) %in% c(6, 7, 8) ~ paste("Summer", year(date)),
+      month(date) %in% c(9, 10, 11) ~ paste("Fall", year(date))
+    )
+  )|>
+    arrange(date)
+#finding top reasons
+top_reasons <- dates|>
+  count(`Dispatch Reason (eDispatch.01)`, sort = TRUE)|>
+  slice_head(n = 5)
+
+top_12_reasons <- dates |>
+    count(`Dispatch Reason (eDispatch.01)`, sort = TRUE)|>
+  slice_head(n = 12)
+
+onlyTopReasons <- dates|>
+    semi_join(top_reasons, by = "Dispatch Reason (eDispatch.01)")
+
+onlyTop12Reasons <- dates |>
+  semi_join(top_12_reasons, by = "Dispatch Reason (eDispatch.01)")
+```
+
+```{r}
+#grouped by month
+byMonth <- onlyTopReasons |>
+  count(`Dispatch Reason (eDispatch.01)`, `mm/yyyy`) |>
+  mutate(month = my(`mm/yyyy`)) |>
+  ggplot(aes(
+    x = month,
+    y = n,
+    color = `Dispatch Reason (eDispatch.01)`
+  )) +
+  geom_line()
+#Top Reasons by season
+bySeason <- onlyTopReasons |>
+  count(`Dispatch Reason (eDispatch.01)`, season, season_label) |>
+  ggplot(aes(
+    x = season,
+    y = n,
+    color = `Dispatch Reason (eDispatch.01)`,
+    group = `Dispatch Reason (eDispatch.01)`
+  )) +
+  geom_line(linewidth = 1.1) +
+  scale_x_continuous(
+  breaks = seq(1, max(dates$season), by = 2),
+    labels = unique(dates$season_label)[seq(1, length(unique(dates$season_label)), by = 2)]
+  )+
+  theme(
+  axis.text.x = element_text(
+    angle = 45,
+    hjust = 1))+
+  labs(title = "Top Reasons Over the Seasons",
+       x = "Season",
+       y = "Number of Dispatches")
+
+```
+
+```{r}
+overallCounts <- onlyTop12Reasons |>
+  count(season, season_label)
+#Top Reasons by season but facet wrapped
+fw_by_season <- onlyTop12Reasons |>
+  count(`Dispatch Reason (eDispatch.01)`, season, season_label) |>
+  ggplot(mapping = aes(
+    x = season,
+    y = n,
+    color = `Dispatch Reason (eDispatch.01)`
+  )) +
+  geom_line(linewidth = 1.1) +
+  geom_line(data = overallCounts, aes(x = season, y = n),
+            color = "black") +
+  scale_x_continuous(
+  breaks = seq(1, max(onlyTop12Reasons$season), by = 4),
+    labels = unique(onlyTop12Reasons$season_label)[seq(1, length(unique(onlyTop12Reasons$season_label)), by = 4)]
+  )+
+  theme(
+  legend.position = "none",
+  axis.text.x = element_text(
+    angle = 90,
+    hjust = 1))+
+  labs(title = "Top Reasons Over the Seasons",
+       x = "Season",
+       y = "Number of Dispatches") +
+  facet_wrap(~`Dispatch Reason (eDispatch.01)`)
+
+
+
+overallCountsMonth <- onlyTop12Reasons |>
+  count(`mm/yyyy`, month)
+#Top Reasons by month but facet wrapped
+fw_by_month <- onlyTop12Reasons |>
+  count(`Dispatch Reason (eDispatch.01)`, `mm/yyyy`, month) |>
+  ggplot(mapping = aes(
+    x = month,
+    y = n,
+    color = `Dispatch Reason (eDispatch.01)`
+  )) +
+  geom_line(linewidth = 1.1) +
+  geom_line(data = overallCountsMonth, aes(x = month, y = n),
+            color = "black") +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%m/%Y"
+  )+
+  theme(
+  legend.position = "none",
+  axis.text.x = element_text(
+    angle = 90,
+    hjust = 1))+
+  labs(title = "Top Reasons Over the Months",
+       x = "Month",
+       y = "Number of Dispatches") +
+  facet_wrap(~`Dispatch Reason (eDispatch.01)`)
+
+
+
+
+```
+
+```{r}
+byMonth
+
+bySeason
+
+fw_by_month
+
+fw_by_season
+
+
+```
