@@ -1,0 +1,193 @@
+---
+title: "Second Calls and Mutual Aid"
+format: pdf
+---
+```{r, message = F}
+# load in packages and data
+library(tidyverse)
+library(lubridate)
+second_aid <- read_csv("second_shift_aid.csv")
+
+# create seasons col and levels for days and seasons for plots
+days <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+seasons <- c("Spring", "Summer", "Fall", "Winter")
+second_aid <- second_aid |>
+  mutate(`Incident Date` = mdy(`Incident Date`),
+         `Incident Day Name` = factor(`Incident Day Name`, levels = days),
+         Season = case_when(month(`Incident Date`) %in% c(12, 01, 02) ~ "Winter",
+                            month(`Incident Date`) %in% c(03, 04, 05) ~ "Spring",
+                            month(`Incident Date`) %in% c(06, 07, 08) ~ "Summer",
+                            month(`Incident Date`) %in% c(09, 10, 11) ~ "Fall")) |>
+  mutate(Season = factor(Season, levels = seasons))
+```
+
+```{r}
+# table of capability of unit values
+second_aid |>
+  count(`Capability of Unit (eResponse.07)`)
+# number of mutual aid incidents
+mutual_aid_count <- second_aid |>
+  filter(`Capability of Unit (eResponse.07)` == "Call Turn Over / Mutual Aid") |>
+  nrow()
+
+# table of ems shift values
+second_aid |>
+  count(`EMS Shift (itResponse.005)`)
+# number of second call incidents
+second_call_count <- second_aid |>
+  filter(`EMS Shift (itResponse.005)` %in% 
+           c("No Shift (Second Call)", "No Shift (Second Call/Call-In Transfer")) |>
+  nrow()
+
+```
+The total number of incidents not taken by the scheduled EMS crew from 2021-Present is `r mutual_aid_count + second_call_count`.
+
+```{r}
+# explore mysterious A and B entries
+check <- second_aid |>
+  filter(`EMS Shift (itResponse.005)` == "A" | `EMS Shift (itResponse.005)` == "B")
+
+check |>
+  head(10)
+
+most_recent_use <- check |>
+  pull(`Incident Date`) |>
+  max()
+```
+We were wondering what EMS Shift "A" and "B" were refering to. The last use of them was `r most_recent_use`.
+
+```{r}
+# filter to only contain second shift and mutual aid
+second_aid_filter <- second_aid |>
+  filter(`EMS Shift (itResponse.005)` == "No Shift (Second Call/Call-In Transfer)" |
+          `EMS Shift (itResponse.005)` == "No Shift (Second Call)" |
+          `Capability of Unit (eResponse.07)` == "Call Turn Over / Mutual Aid")
+
+# full time series
+second_aid_filter |>
+  count(period = floor_date(`Incident Date`, "month")) |>
+  ggplot() +
+  geom_line(aes(x = period, y = n)) +
+  scale_x_date(date_breaks = "3 month", date_labels = "%b %y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "Date",
+    y = "Count",
+    title = "Second Call/Mutual Aid Counts"
+  )
+```
+
+```{r}
+# bar dotw
+second_aid_filter |>
+  ggplot() +
+  geom_bar(aes(x = `Incident Day Name`)) +
+  geom_text(aes(x = `Incident Day Name`, label = after_stat(count)),
+            stat = "count", vjust = -0.5) +
+  labs(
+    x = "Day of the Week",
+    y = "Counts",
+    title = "Second Call/Mutual Aid Counts by Day of the Week"
+  )
+```
+
+```{r}
+# bar season
+second_aid_filter |>
+  ggplot() +
+  geom_bar(aes(x = Season)) +
+  geom_text(aes(x = Season, label = after_stat(count)),
+            stat = "count", vjust = -0.5) +
+  labs(
+    x = "Season",
+    y = "Counts",
+    title = "Second Call/Mutual Aid Counts by Meteorological Season"
+  )
+```
+
+```{r}
+# bar dotw and season
+second_aid_filter |>
+  ggplot() +
+  geom_bar(aes(x = `Incident Day Name`)) +
+  facet_wrap(~Season) +
+  geom_text(aes(x = `Incident Day Name`, label = after_stat(count)),
+            stat = "count", vjust = 1.5, color = "white") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "Day of the Week",
+    y = "Count",
+    title = "Second Call/Mutual Aid Counts by Meteorological Season and Day of the Week"
+  )
+```
+
+```{r}
+# bar dotw, season, and year
+second_aid_filter |>
+  ggplot() +
+  geom_bar(aes(x = `Incident Day Name`)) +
+  facet_grid(year(`Incident Date`) ~ Season) +
+  geom_text(aes(x = `Incident Day Name`, label = after_stat(count)),
+            stat = "count", vjust = -0.5, size = 2.5) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "Day of the Week",
+    y = "Count",
+    title = "Second Call/Mutual Aid Counts by Meteorological Season, Day of the Week, and Year"
+  )
+
+## 13 weeks in a season
+```
+
+```{r}
+# bar month
+second_aid_filter |>
+  ggplot() +
+  geom_bar(aes(x = `Incident Day Name`)) +
+  facet_wrap(~month(`Incident Date`)) +
+  geom_text(aes(x = `Incident Day Name`, label = after_stat(count)),
+            stat = "count", vjust = -0.5) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "Day of the Week",
+    y = "Counts",
+    title = "Second Call/Mutual Aid Counts by Day of the Week and Month"
+  )
+```
+
+```{r}
+# 2025-Present
+second_aid_filter |>
+  filter(year(`Incident Date`) >= 2025) |>
+  count(period = floor_date(`Incident Date`, "month")) |>
+  ggplot() +
+  geom_line(aes(x = period, y = n)) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "Date",
+    y = "Count",
+    title = "Second Call/Mutual Aid Counts (2025-Present)"
+  )
+```
+
+```{r}
+# Jun 25 - Oct 25
+second_aid_filter |>
+  filter(year(`Incident Date`) == 2025 &
+           month(`Incident Date`) > 05 &
+           month(`Incident Date`) < 11) |>
+  count(period = floor_date(`Incident Date`, "day")) |>
+  ggplot(aes(x = period, y = n)) +
+  geom_line() +
+  geom_point() +
+  scale_x_date(date_breaks = "1 week", date_labels = "%d %b %y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "Date",
+    y = "Count",
+    title = "Second Call/Mutual Aid Counts (Jun-Oct 2025)"
+  )       
+```
+
+Next steps would be to look at the max second calls in one day and see if we can determine any reasons as to why (weather, time of year, etc...). Also use modeling techniques to determine if/when you should schedule a second crew. 
