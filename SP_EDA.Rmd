@@ -2,49 +2,60 @@
 title: "SP_EDA"
 author: "Sebastian Pantzer"
 date: "2026-10-01"
-output: pdf_document
+output:
+  pdf_document:
+    latex_engine: xelatex
+classoption: landscape
 editor_options: 
   chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
 library(dplyr)
 library(tidyverse)
 library(lubridate)
-
-
-```
-
-```{r}
-
-data2 <- read_csv("SP_Data.csv")
+library(stringr)
 
 ```
 
 ```{r}
+
+data <- read_csv("SP_data_alt.csv")
+
+data <- data|>
+  mutate(dow = str_extract(`Incident Date - Day Name`, "(?<=- )\\w+$"))
+
+```
+
+```{r, fig.width=14, fig.height=8}
 #Look at top reasons
-data2|>
+data|>
   group_by(`Dispatch Reason (eDispatch.01)`)|>
   summarise(n = n())|>
   ungroup()|>
   arrange(desc(n))|>
-  slice_head(n = 10)
+  slice_head(n = 12)
 
 #want to group by every month of every year
-dates <- data2 |>
+dates <- data |>
   mutate(
     date = mdy_hms(`Incident Date Time`),
     `mm/yyyy` = format(date, "%m/%Y"),
     month = my(`mm/yyyy`),
     season = case_when(
-      month(date) %in% c(12, 1, 2, 3) ~ (year(date) - 2021) * 4 + 1,
-      month(date) %in% c(4, 5) ~ (year(date) - 2021) * 4 + 2,
+      month(date) %in% c(12, 1, 2) ~ (year(date) - 2021) * 4 + 1,
+      month(date) %in% c(3, 4, 5) ~ (year(date) - 2021) * 4 + 2,
       month(date) %in% c(6, 7, 8) ~ (year(date) - 2021) * 4 + 3,
       month(date) %in% c(9, 10, 11) ~ (year(date) - 2021) * 4 + 4
     ),
     season_label = case_when(
-      month(date) %in% c(12, 1, 2, 3) ~ paste("Winter", year(date)),
-      month(date) %in% c(4, 5) ~ paste("Spring", year(date)),
+      month(date) %in% c(12, 1, 2) ~ paste("Winter", year(date)),
+      month(date) %in% c(3, 4, 5) ~ paste("Spring", year(date)),
       month(date) %in% c(6, 7, 8) ~ paste("Summer", year(date)),
       month(date) %in% c(9, 10, 11) ~ paste("Fall", year(date))
     )
@@ -66,7 +77,7 @@ onlyTop12Reasons <- dates |>
   semi_join(top_12_reasons, by = "Dispatch Reason (eDispatch.01)")
 ```
 
-```{r}
+```{r, fig.width=14, fig.height=8}
 #grouped by month
 byMonth <- onlyTopReasons |>
   count(`Dispatch Reason (eDispatch.01)`, `mm/yyyy`) |>
@@ -101,7 +112,7 @@ bySeason <- onlyTopReasons |>
 
 ```
 
-```{r}
+```{r, fig.width=14, fig.height=8}
 overallCounts <- onlyTop12Reasons |>
   count(season, season_label)
 #Top Reasons by season but facet wrapped
@@ -163,7 +174,7 @@ fw_by_month <- onlyTop12Reasons |>
 
 ```
 
-```{r}
+```{r, fig.width=14, fig.height=8}
 byMonth
 
 bySeason
@@ -172,5 +183,242 @@ fw_by_month
 
 fw_by_season
 
+```
+
+```{r, fig.width=14, fig.height=8}
+#Let's look at the locations of the top reasons
+onlyTop12Reasons|>
+  filter(!is.na(`Scene GPS Longitude Encoded (eScene.11)`))|>
+  filter(`Scene GPS Longitude Encoded (eScene.11)` < 0)|>
+  ggplot(aes(x = `Scene GPS Latitude Encoded (eScene.11)`,
+             y = `Scene GPS Longitude Encoded (eScene.11)`,
+             color = `Dispatch Reason (eDispatch.01)`))+
+  geom_point()+
+  facet_wrap(~`Dispatch Reason (eDispatch.01)`)+
+  theme(
+  legend.position = "none")
+```
+
+```{r, fig.width=14, fig.height=8}
+#Stacked bar chart by month
+hist_by_month <- onlyTop12Reasons |>
+  count(`Dispatch Reason (eDispatch.01)`, `mm/yyyy`, month) |>
+  ggplot(mapping = aes(
+    x = month,
+    y = n,
+    fill = `Dispatch Reason (eDispatch.01)`
+  )) +
+  geom_col() +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%m/%Y"
+  )+
+  theme(
+  axis.text.x = element_text(
+    angle = 45,
+    hjust = 1))+
+  labs(title = "Top Reasons Over the Months",
+       x = "Month",
+       y = "Number of Dispatches")
+
+hist_by_month
+
+hist_by_season <- onlyTop12Reasons |>
+  count(`Dispatch Reason (eDispatch.01)`, season, season_label) |>
+  ggplot(mapping = aes(
+    x = season,
+    y = n,
+    fill = `Dispatch Reason (eDispatch.01)`
+  )) +
+  geom_col()+
+  scale_x_continuous(
+  breaks = seq(1, max(onlyTop12Reasons$season), by = 4),
+    labels = unique(onlyTop12Reasons$season_label)[seq(1, length(unique(onlyTop12Reasons$season_label)), by = 4)]
+  )+
+  theme(
+  axis.text.x = element_text(
+    angle = 90,
+    hjust = 1))+
+  labs(title = "Top Reasons Over the Seasons",
+       x = "Season",
+       y = "Number of Dispatches")
+
+hist_by_season
+```
+
+```{r, fig.width=14, fig.height=8}
+#Let's look Unit capability
+nrow(data[data$`Capability of Unit (eResponse.07)` == "Call Turn Over / Mutual Aid", ])
+
+nrow(data[data$`Capability of Unit (eResponse.07)` == "Ambulance (ALS)", ])
+
+nrow(data[data$`Capability of Unit (eResponse.07)` == "Ambulance (BLS)", ])
+191+28922+4908
+
+unique(data$`Capability of Unit (eResponse.07)`)
+
+capability_over_time <- dates|>
+  count(`Capability of Unit (eResponse.07)`, `mm/yyyy`, month) |>
+  ggplot(mapping = aes(
+    x = month,
+    y = n,
+    fill = `Capability of Unit (eResponse.07)`
+  )) +
+  geom_col() +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%m/%Y"
+  )+
+  theme(
+  axis.text.x = element_text(
+    angle = 45,
+    hjust = 1))+
+  labs(title = "Capability Over the Months",
+       x = "Month",
+       y = "Number of Dispatches")
+
+capability_over_time
+
+
+capability_over_time_fw <- dates|>
+  count(`Capability of Unit (eResponse.07)`, `mm/yyyy`, month) |>
+  ggplot(mapping = aes(
+    x = month,
+    y = n
+  )) +
+  geom_col() +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%m/%Y"
+  )+
+  theme(
+  axis.text.x = element_text(
+    angle = 45,
+    hjust = 1))+
+  labs(title = "Capability Over the Months",
+       x = "Month",
+       y = "Number of Dispatches")+
+  facet_wrap(~`Capability of Unit (eResponse.07)`)
+
+```
+
+```{r, fig.width=14, fig.height=8}
+#Let's look at type of service requested
+request_over_time <- dates|>
+  count(`Response Type Of Service Requested With Code (eResponse.05)`, `mm/yyyy`, month) |>
+  ggplot(mapping = aes(
+    x = month,
+    y = n,
+    fill = `Response Type Of Service Requested With Code (eResponse.05)`
+  )) +
+  geom_col() +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%m/%Y"
+  )+
+  theme(
+  axis.text.x = element_text(
+    angle = 45,
+    hjust = 1))+
+  labs(title = "Amounts Over the Months by Service Requested",
+       x = "Month",
+       y = "Number of Dispatches")
+
+request_over_time
+
+request_over_time_by_capability <- dates|>
+  count(`Response Type Of Service Requested With Code (eResponse.05)`,
+        `Capability of Unit (eResponse.07)`,
+        `mm/yyyy`, month) |>
+  ggplot(mapping = aes(
+    x = month,
+    y = n,
+    fill = `Response Type Of Service Requested With Code (eResponse.05)`
+  )) +
+  geom_col() +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%m/%Y"
+  )+
+  theme(
+  axis.text.x = element_text(
+    angle = 45,
+    hjust = 1))+
+  labs(title = "Amounts Over the Months by Service Requested",
+       x = "Month",
+       y = "Number of Dispatches")+
+  facet_wrap(~`Capability of Unit (eResponse.07)`)
+
+request_over_time_by_capability
+
+
+capability_over_time_fw_by_request <- dates|>
+  count(`Response Type Of Service Requested With Code (eResponse.05)`,
+        `Capability of Unit (eResponse.07)`,
+        `mm/yyyy`, month) |>
+  ggplot(mapping = aes(
+    x = month,
+    y = n,
+    fill = `Capability of Unit (eResponse.07)`
+  )) +
+  geom_col() +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%m/%Y"
+  )+
+  theme(
+  axis.text.x = element_text(
+    angle = 45,
+    hjust = 1))+
+  labs(title = "Amounts Over the Months by Service Requested",
+       x = "Month",
+       y = "Number of Dispatches")+
+  facet_wrap(~`Response Type Of Service Requested With Code (eResponse.05)`)
+
+capability_over_time_fw_by_request
+```
+
+```{r}
+#distribution of arrival at scene to desination
+data|>
+  filter(!is.na(`Incident Unit Arrived On Scene To Patient Arrived At Destination In HHMMSS`))|>
+  mutate(log = log(period_to_seconds(hms(`Incident Unit Arrived On Scene To Patient Arrived At Destination In HHMMSS`))))|>
+  ggplot(aes(x = log))+
+  geom_histogram()
+
+data|>
+  filter(!is.na(`Incident Unit Arrived On Scene To Patient Arrived At Destination In HHMMSS`))|>
+  ggplot(aes(x = log))+
+  geom_point()
+
+data|>
+  count(dow)|>
+  ggplot(aes(x = dow, y = ))
+
+
+data|>
+  filter(!is.na(`Incident Unit Arrived On Scene To Patient Arrived At Destination In HHMMSS`))|>
+  mutate(secs = period_to_seconds(hms(`Incident Unit Arrived On Scene To Patient Arrived At Destination In HHMMSS`)))|>
+  summarise(mean_mins = mean(secs)/60)
+
+data|>
+  filter(!is.na(`Incident Unit Arrived On Scene To Patient Arrived At Destination In HHMMSS`))|>
+  mutate(secs = log(period_to_seconds(hms(`Incident Unit Arrived On Scene To Patient Arrived At Destination In HHMMSS`))))|>
+  ggplot(aes(x = `Scene GPS Latitude Encoded (eScene.11)`, y = `Scene GPS Longitude Encoded (eScene.11)`, color = secs))+
+  geom_point()+
+  scale_color_viridis_c(option = "A")
+```
+
+```{r}
+
+##Looking at why there are NA's in state name
+data|>
+  count(`Incident State Name (eScene.18)`)
+
+data|>
+  filter(is.na(`Incident State Name (eScene.18)`))|>
+  view()
+
+#idk but there's only 32 n/a's
 
 ```
