@@ -196,7 +196,11 @@ second_aid_filter |>
     x = "Date",
     y = "Count",
     title = "Second Call/Mutual Aid Day by Day Counts"
-  )       
+  )
+
+second_aid_filter |>
+  count(period = floor_date(`Incident Date`, "day")) |>
+  filter(n == 3)
 ```
 
 The last thing we looked at here was the number of calls on a given day. We can see that the max was 3 in one day.
