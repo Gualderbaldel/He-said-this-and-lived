@@ -1,0 +1,204 @@
+---
+title: "Second Calls and Mutual Aid"
+format: pdf
+---
+```{r, echo = F, message = F}
+# load in packages and data
+library(tidyverse)
+library(lubridate)
+second_aid <- read_csv("second_shift_aid.csv")
+
+# create seasons col and levels for days and seasons for plots
+days <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+seasons <- c("Spring", "Summer", "Fall", "Winter")
+second_aid <- second_aid |>
+  mutate(`Incident Date` = mdy(`Incident Date`),
+         `Incident Day Name` = factor(`Incident Day Name`, levels = days),
+         Season = case_when(month(`Incident Date`) %in% c(12, 01, 02) ~ "Winter",
+                            month(`Incident Date`) %in% c(03, 04, 05) ~ "Spring",
+                            month(`Incident Date`) %in% c(06, 07, 08) ~ "Summer",
+                            month(`Incident Date`) %in% c(09, 10, 11) ~ "Fall")) |>
+  mutate(Season = factor(Season, levels = seasons))
+```
+
+```{r, echo = F}
+# table of capability of unit values
+second_aid |>
+  count(`Capability of Unit (eResponse.07)`)
+# number of mutual aid incidents
+mutual_aid_count <- second_aid |>
+  filter(`Capability of Unit (eResponse.07)` == "Call Turn Over / Mutual Aid") |>
+  nrow()
+
+# table of ems shift values
+second_aid |>
+  count(`EMS Shift (itResponse.005)`)
+# number of second call incidents
+second_call_count <- second_aid |>
+  filter(`EMS Shift (itResponse.005)` %in% 
+           c("No Shift (Second Call)", "No Shift (Second Call/Call-In Transfer")) |>
+  nrow()
+
+```
+The total number of incidents not taken by the scheduled EMS crew from 2021-Present is `r mutual_aid_count + second_call_count`.
+
+```{r, echo = F}
+# explore mysterious A and B entries
+check <- second_aid |>
+  filter(`EMS Shift (itResponse.005)` == "A" | `EMS Shift (itResponse.005)` == "B")
+
+check |>
+  select(`Incident Date`, `EMS Shift (itResponse.005)`, `Type of Call (eResponse.05)`)
+  head(10)
+
+most_recent_use <- check |>
+  pull(`Incident Date`) |>
+  max()
+```
+We were wondering what EMS Shift "A" and "B" were referring to. The last use of them was `r most_recent_use`.
+
+```{r, echo = F, fig.dim=c(8,4)}
+# filter to only contain second shift and mutual aid
+second_aid_filter <- second_aid |>
+  filter(`EMS Shift (itResponse.005)` == "No Shift (Second Call/Call-In Transfer)" |
+          `EMS Shift (itResponse.005)` == "No Shift (Second Call)" |
+          `Capability of Unit (eResponse.07)` == "Call Turn Over / Mutual Aid")
+
+first_transfer <- second_aid |>
+  filter(`EMS Shift (itResponse.005)` == "Transfer Shift") |>
+  pull(`Incident Date`) |>
+  min()
+
+# full time series
+second_aid_filter |>
+  count(period = floor_date(`Incident Date`, "month")) |>
+  ggplot() +
+  geom_line(aes(x = period, y = n)) +
+  geom_vline(xintercept = as.Date(most_recent_use), color = "blue", linetype = "dashed") +
+  geom_vline(xintercept = as.Date(first_transfer), color = "red", linetype = "dashed") +
+  annotate("text", x = as.Date(most_recent_use), y = Inf,
+           label = "Last Use of 'A' and B'", hjust = -0.1, vjust = 1.5, color = "blue") +
+  annotate("text", x = as.Date(first_transfer), y = Inf,
+           label = "First Transfer Shift", hjust = 1.1, vjust = 1.5, color = "red") +
+  scale_x_date(date_breaks = "3 month", date_labels = "%b %y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "Date",
+    y = "Count",
+    title = "Second Call/Mutual Aid Counts"
+  )
+```
+
+```{r, echo = F, fig.dim=c(6,5)}
+# bar dotw
+second_aid_filter |>
+  ggplot() +
+  geom_bar(aes(x = `Incident Day Name`)) +
+  geom_text(aes(x = `Incident Day Name`, label = after_stat(count)),
+            stat = "count", vjust = -0.5) +
+  labs(
+    x = "Day of the Week",
+    y = "Counts",
+    title = "Second Call/Mutual Aid Counts by Day of the Week"
+  )
+
+chisq.test(table(second_aid_filter$`Incident Day Name`))
+```
+No clear/obvious trend here. We ran a Chi-Squared test and found that there is no significant difference between the amount of calls on any day. 
+
+```{r, echo = F, fig.dim=c(6,5)}
+# bar season
+second_aid_filter |>
+  ggplot() +
+  geom_bar(aes(x = Season)) +
+  geom_text(aes(x = Season, label = after_stat(count)),
+            stat = "count", vjust = -0.5) +
+  labs(
+    x = "Season",
+    y = "Counts",
+    title = "Second Call/Mutual Aid Counts by Meteorological Season"
+  )
+
+chisq.test(table(second_aid_filter$Season))
+```
+Here there does appear to be a difference between the seasons and a Chi-Squared test showed that there was a significant difference between the amount of calls in a season.
+
+```{r, echo = F, fig.dim=c(6,5)}
+# bar dotw and season
+second_aid_filter |>
+  ggplot() +
+  geom_bar(aes(x = `Incident Day Name`)) +
+  facet_wrap(~Season) +
+  geom_text(aes(x = `Incident Day Name`, label = after_stat(count)),
+            stat = "count", vjust = 1.5, color = "white") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "Day of the Week",
+    y = "Count",
+    title = "Second Call/Mutual Aid Counts by Meteorological Season and Day of the Week"
+  )
+```
+
+Spring
+```{r, echo = F}
+## 13 weeks in a season
+spring <- second_aid_filter |>
+  filter(Season =="Spring")
+chisq.test(table(spring$`Incident Day Name`))
+```
+Summer
+```{r, echo = F}
+summer <- second_aid_filter |>
+  filter(Season =="Summer")
+chisq.test(table(summer$`Incident Day Name`))
+```
+Fall
+```{r, echo = F}
+fall <- second_aid_filter |>
+  filter(Season =="Fall")
+chisq.test(table(fall$`Incident Day Name`))
+```
+Winter
+```{r, echo = F}
+winter <- second_aid_filter |>
+  filter(Season =="Winter")
+chisq.test(table(winter$`Incident Day Name`))
+```
+This does show that there is a significant difference for the day of the week in the fall. 
+
+```{r, echo = F, fig.dim=c(8,6)}
+# bar dotw, season, and year
+second_aid_filter |>
+  ggplot() +
+  geom_bar(aes(x = `Incident Day Name`)) +
+  facet_grid(year(`Incident Date`) ~ Season) +
+  geom_text(aes(x = `Incident Day Name`, label = after_stat(count)),
+            stat = "count", vjust = -0.5, size = 2.5) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "Day of the Week",
+    y = "Count",
+    title = "Second Call/Mutual Aid Counts by Meteorological Season, Day of the Week, and Year"
+  )
+```
+However, it could possibly be explained by the the number of Friday calls in the fall of 2025.
+
+```{r, echo = F}
+# Max Days
+second_aid_filter |>
+  count(period = floor_date(`Incident Date`, "day")) |>
+  ggplot(aes(x = period, y = n)) +
+  geom_line() +
+  geom_point() +
+  scale_x_date(date_breaks = "3 months", date_labels = "%b %y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "Date",
+    y = "Count",
+    title = "Second Call/Mutual Aid Day by Day Counts"
+  )       
+```
+
+The last thing we looked at here was the number of calls on a given day. We can see that the max was 3 in one day.
+
+Next steps would be to look into these days and see if we can determine any reasons as to why (weather, time of year, etc...). We have also discussed using modeling techniques to determine if/when you should schedule a second crew (output could be a % chance that you will need the second crew).
