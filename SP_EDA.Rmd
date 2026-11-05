@@ -20,16 +20,16 @@ library(dplyr)
 library(tidyverse)
 library(lubridate)
 library(stringr)
+library(data.table)
 
 ```
 
 ```{r}
 
-data <- read_csv("SP_data_alt.csv")
+data <- read_csv("SP_data_alt.csv", locale = locale(encoding = "ISO-8859-1"))
 
 data <- data|>
   mutate(dow = str_extract(`Incident Date - Day Name`, "(?<=- )\\w+$"))
-
 ```
 
 ```{r, fig.width=14, fig.height=8}
@@ -422,3 +422,18 @@ data|>
 #idk but there's only 32 n/a's
 
 ```
+
+```{r}
+#looking at time series of dispatch duration metrics
+dates |>
+  ggplot(aes(x = date, y = `Incident Unit Arrived On Scene To Patient Arrived At Destination In HHMMSS`))+
+  geom_point()
+
+#This sucks
+dates |>
+  ggplot(aes(x = date, y = `Incident Dispatch Notified To Unit Arrived On Scene In HHMMSS`))+
+  geom_point()
+
+
+```
+

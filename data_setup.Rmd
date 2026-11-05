@@ -1,0 +1,81 @@
+---
+title: "data_setup"
+author: "Sebastian Pantzer"
+date: "2026-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(stringr)
+library(data.table)
+library(patchwork)
+
+```
+This is used to set up the data with necessary variables. Can be copied into any markdown.
+```{r}
+
+patient_data2 <- read_csv("narratives.csv", locale = locale(encoding = "ISO-8859-1"))git
+```
+
+```{r, fig.width=14, fig.height=8}
+#patient call and transport volume is empty
+patient_data2 <- patient_data2|>
+  mutate(
+    date = mdy_hms(`Incident Date Time`),
+    `mm/yyyy` = format(date, "%m/%Y"),
+    month = my(`mm/yyyy`),
+    season = case_when(
+      month(date) %in% c(12, 1, 2) ~ (year(date) - 2021) * 4 + 1,
+      month(date) %in% c(3, 4, 5) ~ (year(date) - 2021) * 4 + 2,
+      month(date) %in% c(6, 7, 8) ~ (year(date) - 2021) * 4 + 3,
+      month(date) %in% c(9, 10, 11) ~ (year(date) - 2021) * 4 + 4
+    ),
+    season_label = case_when(
+      month(date) %in% c(12, 1, 2) ~ paste("Winter", year(date)),
+      month(date) %in% c(3, 4, 5) ~ paste("Spring", year(date)),
+      month(date) %in% c(6, 7, 8) ~ paste("Summer", year(date)),
+      month(date) %in% c(9, 10, 11) ~ paste("Fall", year(date))
+    )
+  )
+
+#Mutating call duration features
+#Dispatch -> back in service
+#dispatch -> destination
+patient_data2 <- patient_data2 |>
+  mutate(
+    total_event_duration = difftime( mdy_hms(`Incident Unit Back In Service Date Time (eTimes.13)`), mdy_hms(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`), units = "mins"),
+    dispatch_destination = difftime( mdy_hms(`Incident Patient Arrived At Destination Date Time (eTimes.11)`), mdy_hms(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`), units = "mins")
+  )|>
+    mutate(ready = as.numeric(lubridate::hms(`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`),
+                            units = "mins"
+    ))
+
+patient_data2 <- patient_data2 |>
+    mutate(unsched = case_when(
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call/Call-In Transfer)" ~ "Second Call",
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call)"  ~ "Second Call",
+    (`Capability of Unit (eResponse.07)` == "Call Turn Over / Mutual Aid") & (`Response Type Of Service Requested With Code (eResponse.05)` != "Mutual Aid (2205009)")  ~
+      "Turned Over",
+    TRUE ~ "Scheduled"))
+
+patient_data2 <- patient_data2 |>
+  mutate(`EMS Shift (itResponse.005)` = case_when(
+    `EMS Shift (itResponse.005)` == "A" ~ "911 Day",
+    `EMS Shift (itResponse.005)` == "B" ~ "911 Night",
+    `EMS Shift (itResponse.005)` == "Transfer Shift" ~ "Transfer Shift",
+    `EMS Shift (itResponse.005)` == "911 Night" ~ "911 Night",
+    `EMS Shift (itResponse.005)` == "911 Day" ~ "911 Day",
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call/Call-In Transfer)" ~ "No Shift (Second Call/Call-In Transfer)",
+    `EMS Shift (itResponse.005)` == "Event/Standby" ~ "Event/Standby",
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call)" ~ "No Shift (Second Call)"
+  ))
+  
+```

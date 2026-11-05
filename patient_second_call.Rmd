@@ -21,18 +21,21 @@ library(tidyverse)
 library(lubridate)
 library(stringr)
 library(data.table)
+library(patchwork)
 
 ```
 
 ```{r}
 
-patient_data2 <- read_csv("SP-Data_2026-10-17_175303.csv", locale = locale(encoding = "ISO-8859-1"))
+patient_data2 <- read_csv("narratives.csv", locale = locale(encoding = "ISO-8859-1"))
+
+patient_data2 <- patient_data2 |>
+  select(-(37:39))
 ```
 
 ```{r, fig.width=14, fig.height=8}
 #patient call and transport volume is empty
 patient_data2 <- patient_data2|>
-  select(-(29:32))|>
   mutate(
     date = mdy_hms(`Incident Date Time`),
     `mm/yyyy` = format(date, "%m/%Y"),
@@ -51,6 +54,42 @@ patient_data2 <- patient_data2|>
     )
   )
 
+#Mutating call duration features
+#Dispatch -> back in service
+#dispatch -> destination
+patient_data2 <- patient_data2 |>
+  mutate(
+    total_event_duration = difftime( mdy_hms(`Incident Unit Back In Service Date Time (eTimes.13)`), mdy_hms(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`), units = "mins"),
+    dispatch_destination = difftime( mdy_hms(`Incident Patient Arrived At Destination Date Time (eTimes.11)`), mdy_hms(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`), units = "mins")
+  )|>
+    mutate(ready = as.numeric(lubridate::hms(`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`),
+                            units = "mins"
+    ))
+
+patient_data2 <- patient_data2 |>
+    mutate(unsched = case_when(
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call/Call-In Transfer)" ~ "Second Call",
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call)"  ~ "Second Call",
+    (`Capability of Unit (eResponse.07)` == "Call Turn Over / Mutual Aid") & (`Response Type Of Service Requested With Code (eResponse.05)` != "Mutual Aid (2205009)")  ~
+      "Turned Over",
+    TRUE ~ "Scheduled"))
+
+patient_data2 <- patient_data2 |>
+  mutate(`EMS Shift (itResponse.005)` = case_when(
+    `EMS Shift (itResponse.005)` == "A" ~ "911 Day",
+    `EMS Shift (itResponse.005)` == "B" ~ "911 Night",
+    `EMS Shift (itResponse.005)` == "Transfer Shift" ~ "Transfer Shift",
+    `EMS Shift (itResponse.005)` == "911 Night" ~ "911 Night",
+    `EMS Shift (itResponse.005)` == "911 Day" ~ "911 Day",
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call/Call-In Transfer)" ~ "No Shift (Second Call/Call-In Transfer)",
+    `EMS Shift (itResponse.005)` == "Event/Standby" ~ "Event/Standby",
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call)" ~ "No Shift (Second Call)"
+  ))
+  
+```
+
+```{r}
+
 #want to count the patients' number of calls
 patient_data2|>
   filter(!is.na(`Patient EMS Patient ID (ePatient.01)`))|>
@@ -62,7 +101,8 @@ patient_data2|>
   filter(!is.na(`Patient EMS Patient ID (ePatient.01)`))|>
   count(`Patient EMS Patient ID (ePatient.01)`, name = "num")|>
   ggplot(aes(x = num))+
-  geom_histogram()
+  geom_histogram(binwidth = 1)+
+  labs(title = "Distribution of number of visits for patients")
 
 ##Most visits from a patient: 33
 ## 632 have visited more than once
@@ -97,8 +137,9 @@ patient_time_data2 <- patient_data2|>
 patient_time_data2 |>
   filter(!is.na(time_between_visits_days))|>
   ggplot(aes(x = time_between_visits_days))+
-  geom_histogram()+
+  geom_histogram(binwidth = 10)+
   labs(title = "Histogram of time between patient return, given that a patient has returned")
+
 
 
 #Now by dispatch reason
@@ -259,3 +300,213 @@ returned_within_week <- patient_time_data2 |>
     missing = "Didn't return"))
 ```
 
+
+These are distributions of the variable duration of destination to back in service, with conditions.
+```{r returners, fig.width=14, fig.height=8}
+
+sum(is.na(patient_data2$`Incident Unit Arrived At Patient To Patient Arrived At Destination In HHMMSS`))
+
+#Top ten reasons for returners
+top_ten_reasons_return <- patient_time_data2 |>
+  filter(num_calls > 1)|>
+  count(`Dispatch Reason (eDispatch.01)`, sort = TRUE)|>
+  slice_head(n = 10)|>
+  pull(`Dispatch Reason (eDispatch.01)`)
+
+g2 <- patient_time_data2 |>
+  filter(num_calls > 1)|>
+    mutate(top_ten = if_else(`Dispatch Reason (eDispatch.01)` %in% top_ten_reasons_return, `Dispatch Reason (eDispatch.01)`, NA
+  ))|>
+  ggplot(aes(x = ready, fill = top_ten))+
+  geom_histogram(binwidth = 5)+
+  labs(title = "Histogram of destination to return to service duration for returners")+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )
+
+
+#top reasons for non-returners
+top_ten_reasons <- patient_time_data2 |>
+  filter(num_calls < 2)|>
+  count(`Dispatch Reason (eDispatch.01)`, sort = TRUE)|>
+  slice_head(n = 10)|>
+  pull(`Dispatch Reason (eDispatch.01)`)
+
+g1 <- patient_time_data2 |>
+  filter(num_calls < 2)|>
+  mutate(top_ten = if_else(`Dispatch Reason (eDispatch.01)` %in% top_ten_reasons, `Dispatch Reason (eDispatch.01)`, NA
+  ))|>
+  ggplot(aes(x = ready, fill = top_ten))+
+  geom_histogram(binwidth = 5)+
+  labs(title = "Histogram of destination to return to service duration for non-returners")+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )+
+  geom_vline(xintercept = 35)
+
+g1/g2
+
+#Distribution for transfers
+patient_time_data2 |>
+  filter(`Dispatch Reason (eDispatch.01)` == "Transfer / Interfacility / Palliative Care",`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS` < hms::as_hms("09:00:00"))|>
+  ggplot(aes(x = `Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`))+
+  geom_histogram()+
+  labs(title = "Distribution of destination to back in service for transfers") +
+  facet_wrap(~`Incident Street Address (eScene.15)`)
+
+patient_time_data2 |>
+  filter(`Dispatch Reason (eDispatch.01)` == "Transfer / Interfacility / Palliative Care",`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS` < hms::as_hms("09:00:00"))|>
+  ggplot(aes(x = `Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`, fill = `EMS Shift (itResponse.005)`))+
+  geom_histogram()+
+  labs(title = "Distribution of destination to back in service for transfers")
+  
+
+
+patient_time_data2 |>
+  filter(num_calls < 2,
+         `Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS` < hms::as_hms("09:00:00"))|>
+  mutate(top_ten = if_else(`Dispatch Reason (eDispatch.01)` %in% top_ten_reasons, `Dispatch Reason (eDispatch.01)`, "Not Top 10"
+  ))|>
+  ggplot(aes(x = `Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`, fill = top_ten))+
+  geom_histogram()+
+  scale_fill_manual(
+    values = c(
+      "Not Top 10" = "darkgray",
+      setNames(
+        scales::hue_pal()(length(setdiff(unique(top_ten_reasons), "Not top ten"))),
+        setdiff(unique(top_ten_reasons), "Not top ten")
+      )
+    )
+  )+
+  facet_wrap(~top_ten)+
+  labs(title = "Histogram of destination to return to service duration for non-returners by reason")
+
+patient_time_data2 |>
+  filter(`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS` < hms::as_hms("09:00:00"))|>
+  ggplot(aes(x = `Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`, fill = `EMS Shift (itResponse.005)`))+
+  geom_histogram()+
+  labs(title = "Distribution of destination to back in service by shift")+
+  facet_wrap(~`EMS Shift (itResponse.005)`)
+
+
+patient_time_data2 |>
+  filter(`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS` < hms::as_hms("09:00:00"))|>
+  ggplot(aes(x = `Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`, fill = `Response Type Of Service Requested With Code (eResponse.05)`))+
+  geom_histogram()+
+  labs(title = "Distribution of destination to back in service by service")
+
+
+
+#duration by person
+```
+
+Now I am interested in looking at times where they use non-scheduled services when there is a transfer the same day
+```{r transfer same day, fig.width=14, fig.height=8}
+#These mutated variables check for if a) there is a transfer on the same day that an event happens and b) if there is a transfer on the same day
+is_transfer_on_same_day <- patient_data2 |>
+  mutate(date_day = format(date, "%d/%m/%Y"))|>
+  group_by(date_day)|>
+  mutate(transfer_same_day = if_else(
+    any(str_detect(`Dispatch Reason (eDispatch.01)`, "Transfer / Interfacility / Palliative Care")), "yes", "no"),
+    unscheduled = if_else(
+      `EMS Shift (itResponse.005)`==
+      regex("No Shift \\(Second Call/Call-In Transfer\\)|No Shift \\(Second Call\\)") |
+      `Response Type Of Service Requested With Code (eResponse.05)`==
+      "Interfacility Transfer (Unscheduled) (it2205.100)" |
+      `Capability of Unit (eResponse.07)` == "Call Turn Over / Mutual Aid",
+    "Yes", "No"
+  ))|>
+  ungroup()
+
+is_transfer_on_same_day|>
+  filter(!is.na(unscheduled))|>
+  ggplot(aes(x = transfer_same_day, fill = unscheduled)) +
+  geom_bar()
+
+is_transfer_on_same_day|>
+  filter(is.na(unscheduled))|>
+  view()
+```
+
+
+Here I'm going to do one better and look at the calls right before an unscheduled event.
+
+
+```{r b4unsched, fig.width=14, fig.height=8}
+before_unscheduled <- patient_data2|>
+  mutate(ready = as.numeric(hms(`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`),
+      units = "mins"
+    ))|>
+  arrange(date)|>
+  mutate(duration_before = lag(total_event_duration),
+         event_before = lag(dispatch_destination),
+         unit_ready_before = lag(ready))
+
+
+patient_data2 |>
+  select(`EMS Shift (itResponse.005)`, `Capability of Unit (eResponse.07)`)|>
+  filter((`Capability of Unit (eResponse.07)` == "Call Turn Over / Mutual Aid") | (`EMS Shift (itResponse.005)` == "No Shift (Second Call/Call-In Transfer)") | (`EMS Shift (itResponse.005)` == "No Shift (Second Call)"))|>
+  view()
+
+before_unscheduled|>
+  select(total_event_duration, duration_before, dispatch_destination, event_before, ready, unit_ready_before)|>
+  view()
+
+#Looking at the distributions of the times for the call before each type of call (sched, second call, and turn over)
+before_unscheduled |>
+  ggplot(aes(x = event_before, fill = unsched)) +
+  geom_density(binwidth = 10)+
+  facet_wrap(~unsched)+
+  scale_x_continuous(
+  limits = c(0, 400)
+  )
+
+#This time with the unit ready duration
+before_unscheduled |>
+  ggplot(aes(x = unit_ready_before, fill = unsched)) +
+  geom_density(binwidth = 10)+
+  facet_wrap(~unsched)+
+  scale_x_continuous(
+  limits = c(0, 400)
+  )
+
+#So it looks like the time duration of the call before a call hardly influences whether the call will be turned over
+```
+
+```{r calls in a day, fig.width=14, fig.height=8}
+num_calls_before <- patient_data2 |>
+  mutate(date_day = format(date, "%m/%d/%Y"))|>
+  group_by(date_day)|>
+  arrange(date)|>
+  mutate(num_earlier_calls = row_number() - 1,
+         num_calls_day = n())|>
+  ungroup()
+
+num_calls_before |>
+  filter(unsched != "Scheduled")|>
+  filter(num_earlier_calls == 0 & num_calls_day == 0)|>
+  view()
+
+num_calls_before |>
+  group_by(date_day) |>
+  filter(sum(unsched != "Scheduled", na.rm = TRUE) > 1) |>
+  View()
+
+num_calls_before |>
+  group_by(date_day) |>
+  filter(sum(unsched != "Scheduled", na.rm = TRUE) > 0) |>
+  View()
+
+num_calls_before |>
+  ggplot(aes(x = num_earlier_calls, fill = unsched))+
+  geom_bar(position = "fill")
+```
+
+```{r decision tree, fig.width=14, fig.height=8}
+#Let's try to do a decision tree
+library(rpart)
+library(rpart.plot)
+tree_1 <- rpart(`Incident City Name (eScene.17)` ~ `Scene GPS Latitude Encoded (eScene.11)` + `Scene GPS Longitude Encoded (eScene.11)`, data = before_unscheduled)
+
+rpart.plot(tree_1)
+```

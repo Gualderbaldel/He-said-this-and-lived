@@ -1,0 +1,414 @@
+---
+title: "Patient_second_call"
+author: "Sebastian Pantzer"
+date: "2026-10-01"
+output:
+  pdf_document:
+    latex_engine: xelatex
+classoption: landscape
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(stringr)
+library(data.table)
+library(patchwork)
+
+```
+
+```{r}
+
+patient_data2 <- read_csv("SP_data_patients.csv", locale = locale(encoding = "ISO-8859-1"))
+```
+
+```{r}
+#patient call and transport volume is empty
+patient_data2 <- patient_data2|>
+  mutate(
+    date = mdy_hms(`Incident Date Time`),
+    `mm/yyyy` = format(date, "%m/%Y"),
+    month = my(`mm/yyyy`),
+    season = case_when(
+      month(date) %in% c(12, 1, 2) ~ (year(date) - 2021) * 4 + 1,
+      month(date) %in% c(3, 4, 5) ~ (year(date) - 2021) * 4 + 2,
+      month(date) %in% c(6, 7, 8) ~ (year(date) - 2021) * 4 + 3,
+      month(date) %in% c(9, 10, 11) ~ (year(date) - 2021) * 4 + 4
+    ),
+    season_label = case_when(
+      month(date) %in% c(12, 1, 2) ~ paste("Winter", year(date)),
+      month(date) %in% c(3, 4, 5) ~ paste("Spring", year(date)),
+      month(date) %in% c(6, 7, 8) ~ paste("Summer", year(date)),
+      month(date) %in% c(9, 10, 11) ~ paste("Fall", year(date))
+    )
+  )
+
+#Mutating call duration features
+#Dispatch -> back in service
+#dispatch -> destination
+patient_data2 <- patient_data2 |>
+  mutate(
+    total_event_duration = difftime( mdy_hms(`Incident Unit Back In Service Date Time (eTimes.13)`), mdy_hms(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`), units = "mins"),
+    dispatch_destination = difftime( mdy_hms(`Incident Patient Arrived At Destination Date Time (eTimes.11)`), mdy_hms(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`), units = "mins")
+  )
+
+patient_data2 <- patient_data2 |>
+    mutate(unsched = case_when(
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call/Call-In Transfer)" ~ "Second Call",
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call)"  ~ "Second Call",
+    (`Capability of Unit (eResponse.07)` == "Call Turn Over / Mutual Aid") & (`Response Type Of Service Requested With Code (eResponse.05)` != "Mutual Aid (2205009)")  ~
+      "Turned Over",
+    TRUE ~ "Scheduled"))
+
+patient_data2 <- patient_data2 |>
+  mutate(`EMS Shift (itResponse.005)` = case_when(
+    `EMS Shift (itResponse.005)` == "A" ~ "911 Day",
+    `EMS Shift (itResponse.005)` == "B" ~ "911 Night",
+    `EMS Shift (itResponse.005)` == "Transfer Shift" ~ "Transfer Shift",
+    `EMS Shift (itResponse.005)` == "911 Night" ~ "911 Night",
+    `EMS Shift (itResponse.005)` == "911 Day" ~ "911 Day",
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call/Call-In Transfer)" ~ "No Shift (Second Call/Call-In Transfer)",
+    `EMS Shift (itResponse.005)` == "Event/Standby" ~ "Event/Standby",
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call)" ~ "No Shift (Second Call)"
+  ))
+
+top_ten_reasons <- patient_data2 |>
+  count(`Dispatch Reason (eDispatch.01)`, sort = TRUE)|>
+  slice_head(n = 10)|>
+  pull(`Dispatch Reason (eDispatch.01)`)
+
+patient_data2 <- patient_data2 |>
+  mutate(top_ten_reasons = if_else(`Dispatch Reason (eDispatch.01)` %in% top_ten_reasons, `Dispatch Reason (eDispatch.01)`, NA
+  ))
+```
+
+```{r total_time, fig.width=14, fig.height=8}
+#Plotting total time distribution
+total_before_25 <- patient_data2|>
+  filter(date < mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  ggplot(aes(x = total_event_duration, fill = top_ten_reasons))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+    limits = c(0, 600)
+  ) +
+  labs(title = "Distribution of Entire Event Duration, before 01/01/25")
+  
+just_event_before_25 <- patient_data2|>
+  filter(date < mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  ggplot(aes(x = dispatch_destination, fill = top_ten_reasons))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )+
+  labs(title = "Distribution of Duration of Dispatched to Patient Arrives at Destination, before 01/01/25")
+
+just_unit_ready_before_25 <- patient_data2|>
+  filter(date < mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  mutate(ready = as.numeric(lubridate::hms(`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`),
+      units = "mins"
+    ))|>
+  ggplot(aes(x = ready, fill = top_ten_reasons))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )+
+  labs(title = "Distribution of Duration of Patient Arrives at Destination to Unit Ready Again, before 01/01/25")
+
+
+
+
+#after 2024
+total <- patient_data2|>
+  filter(date >= mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  ggplot(aes(x = total_event_duration, fill = top_ten_reasons))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+    limits = c(0, 600)
+  ) +
+  labs(title = "Distribution of Entire Event Duration, since 01/01/25")
+
+just_event <- patient_data2|>
+  filter(date >= mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  ggplot(aes(x = dispatch_destination, fill = top_ten_reasons))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )+
+  labs(title = "Distribution of Duration of Dispatched to Patient Arrives at Destination, since 01/01/25")
+
+just_unit_ready <- patient_data2|>
+  filter(date >= mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  mutate(ready = as.numeric(lubridate::hms(`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`),
+                            units = "mins"
+    ))|>
+  ggplot(aes(x = ready, fill = top_ten_reasons))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )+
+  labs(title = "Distribution of Duration of Patient Arrives at Destination to Unit Ready Again, since 01/01/25")
+
+total / just_event / just_unit_ready
+total_before_25 / just_event_before_25 /just_unit_ready_before_25
+#This looks pretty damning... the bimodal distribution seems to be explained solely by the unit getting ready again... What makes a unit take a short time to get ready vs a medium time? Seems like all of the long ready times are transfers (not surprising)
+```
+
+```{r total_time_by_shift, fig.width=14, fig.height=8}
+#Plotting total time distribution
+total_before_25_dest <- patient_data2|>
+  filter(date < mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  ggplot(aes(x = total_event_duration, fill = `EMS Shift (itResponse.005)`))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+    limits = c(0, 600)
+  ) +
+  labs(title = "Distribution of Entire Event Duration, before 01/01/25")
+  
+just_event_before_25_dest <- patient_data2|>
+  filter(date < mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  ggplot(aes(x = dispatch_destination, fill = `EMS Shift (itResponse.005)`))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )+
+  labs(title = "Distribution of Duration of Dispatched to Patient Arrives at Destination, before 01/01/25")
+
+just_unit_ready_before_25_dest <- patient_data2|>
+  filter(date < mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  mutate(ready = as.numeric(lubridate::hms(`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`),
+      units = "mins"
+    ))|>
+  ggplot(aes(x = ready, fill = `EMS Shift (itResponse.005)`))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )+
+  labs(title = "Distribution of Duration of Patient Arrives at Destination to Unit Ready Again, before 01/01/25")
+
+
+
+
+#after 2024
+total_dest <- patient_data2|>
+  filter(date >= mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  ggplot(aes(x = total_event_duration, fill = `EMS Shift (itResponse.005)`))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+    limits = c(0, 600)
+  ) +
+  labs(title = "Distribution of Entire Event Duration, since 01/01/25")
+  
+just_event_dest <- patient_data2|>
+  filter(date >= mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  ggplot(aes(x = dispatch_destination, fill = `EMS Shift (itResponse.005)`))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )+
+  labs(title = "Distribution of Duration of Dispatched to Patient Arrives at Destination, since 01/01/25")
+
+just_unit_ready_dest <- patient_data2|>
+  filter(date >= mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  mutate(ready = as.numeric(lubridate::hms(`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`),
+                            units = "mins"
+    ))|>
+  ggplot(aes(x = ready, fill = `EMS Shift (itResponse.005)`))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )+
+  labs(title = "Distribution of Duration of Patient Arrives at Destination to Unit Ready Again, since 01/01/25")
+
+total_dest / just_event_dest / just_unit_ready_dest
+total_before_25_dest / just_event_before_25_dest /just_unit_ready_before_25_dest
+#This looks pretty damning... the bimodal distribution seems to be explained solely by the unit getting ready again... What makes a unit take a short time to get ready vs a medium time? Seems like all of the long ready times are transfers (not surprising)
+```
+
+```{r total_time_by_, fig.width=14, fig.height=8}
+#Plotting total time distribution
+total_before_25_shift <- patient_data2|>
+  filter(date < mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  ggplot(aes(x = total_event_duration, fill = `Incident Location Type (eScene.09)`))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+    limits = c(0, 600)
+  ) +
+  labs(title = "Distribution of Entire Event Duration, before 01/01/25")
+  
+just_event_before_25_shift <- patient_data2|>
+  filter(date < mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  ggplot(aes(x = dispatch_destination, fill = `Incident Location Type (eScene.09)`))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )+
+  labs(title = "Distribution of Duration of Dispatched to Patient Arrives at Destination, before 01/01/25")
+
+just_unit_ready_before_25_shift <- patient_data2|>
+  filter(date < mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  mutate(ready = as.numeric(lubridate::hms(`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`),
+      units = "mins"
+    ))|>
+  ggplot(aes(x = ready, fill = `Incident Location Type (eScene.09)`))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )+
+  labs(title = "Distribution of Duration of Patient Arrives at Destination to Unit Ready Again, before 01/01/25")
+
+
+
+
+#after 2024
+total_shift <- patient_data2|>
+  filter(date >= mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  ggplot(aes(x = total_event_duration, fill = `Incident Location Type (eScene.09)`))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+    limits = c(0, 600)
+  ) +
+  labs(title = "Distribution of Entire Event Duration, since 01/01/25")
+  
+just_event_shift <- patient_data2|>
+  filter(date >= mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  ggplot(aes(x = dispatch_destination, fill = `Incident Location Type (eScene.09)`))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )+
+  labs(title = "Distribution of Duration of Dispatched to Patient Arrives at Destination, since 01/01/25")
+
+just_unit_ready_shift <- patient_data2|>
+  filter(date >= mdy_hms("01/01/2025 00:00:00"))|>
+  filter(total_event_duration < 750)|>
+  filter(total_event_duration > 0, dispatch_destination > 0)|>
+  mutate(ready = as.numeric(lubridate::hms(`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`),
+                            units = "mins"
+    ))|>
+  ggplot(aes(x = ready, fill = `Incident Location Type (eScene.09)`))+
+  geom_histogram(binwidth = 5)+
+  scale_x_continuous(
+  limits = c(0, 600)
+  )+
+  labs(title = "Distribution of Duration of Patient Arrives at Destination to Unit Ready Again, since 01/01/25")
+
+total_shift / just_event_shift / just_unit_ready_shift
+total_before_25_shift / just_event_before_25_shift /just_unit_ready_before_25_shift
+#This looks pretty damning... the bimodal distribution seems to be explained solely by the unit getting ready again... What makes a unit take a short time to get ready vs a medium time? Seems like all of the long ready times are transfers (not surprising)
+```
+OK, we need to find out what kinds of events make the unit ready again time more than 35 minutes and what kinds of events make the unit ready again in less than 35 minutes. Because it looks like there's two strong modes here, and they're not split on type of injury, shift, or location type...
+```{r what are the two modes setup, fig.width=14, fig.height=8}
+patient_data2 <- patient_data2 |>
+  mutate(ready_in_over_35 = if_else(ready >= 35,
+                                    "Yes", "No"
+  ))
+```
+
+```{r what are the two modes, fig.width=14, fig.height=8}
+library(tigris)
+
+counties <- counties()
+
+addison_county <- counties |> filter(STATEFP == 50, 
+                                     NAMELSAD == "Addison County")
+
+patient_data2|>
+  filter(`Scene GPS Longitude Encoded (eScene.11)` < 0)|>
+  ggplot()+
+  geom_sf(data = addison_county) +
+  geom_point(aes(x = `Scene GPS Longitude Encoded (eScene.11)`,
+                 y = `Scene GPS Latitude Encoded (eScene.11)`,
+                 color = ready_in_over_35))+
+  scale_color_manual(
+    values = c(
+      "Yes" = "red",
+      "No" = "blue"
+    )
+  )
+```
+Ok that gave us nothing really.
+
+```{r}
+before_unscheduled <- patient_data2|>
+  mutate(ready = as.numeric(lubridate::hms(`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`),
+      units = "mins"
+    ))|>
+  arrange(date)|>
+  mutate(duration_before = lag(total_event_duration),
+         event_before = lag(dispatch_destination),
+         unit_ready_before = lag(ready))
+
+before_unscheduled |>
+  ggplot(aes(x = unit_ready_before, fill = unsched))+
+  geom_density(alpha = .5)+
+  scale_x_continuous(
+    limits = c(0, 400)
+  )
+
+before_unscheduled |>
+  ggplot(aes(x = unit_ready_before, fill = unsched))+
+  geom_histogram(alpha = .5)+
+  scale_x_continuous(
+    limits = c(0, 400)
+  )
+
+before_unscheduled |>
+  filter(is.na(unit_ready_before))|>
+  ggplot(aes(x = "all calls", fill = unsched))+
+  geom_bar()+
+  coord_polar(theta = "y")+
+  labs(title = "What types of calls are after the calls that have NA unit reset duration")
+
+before_unscheduled |>
+  filter(!is.na(unit_ready_before))|>
+  ggplot(aes(x = "all calls", fill = unsched))+
+  geom_bar()+
+  coord_polar(theta = "y")+
+  labs(title = "What types of calls are after the calls that have a valid unit reset duration")
+
+#There looks to be a smaller proportion of unscheduled calls when the call before doesn't have a valid unit reset duration. Doesn't do anything for us
+
+```
+That also gave us nothing. It looks like how long it took the unit to reset from the call BEFORE a call has nothing to do with whether that call is scheduled (able to be picked up by a scheduled squad), picked up by an unscheduled call, or turned over to another agency.

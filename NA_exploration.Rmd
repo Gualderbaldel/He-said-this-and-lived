@@ -1,0 +1,111 @@
+---
+title: "NA exploration"
+author: "Sebastian Pantzer"
+date: "2026-10-01"
+output:
+  pdf_document:
+    latex_engine: xelatex
+classoption: landscape
+editor_options: 
+  chunk_output_type: console
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(stringr)
+library(data.table)
+
+```
+
+```{r, fig.width=14, fig.height=8}
+
+data <- read_csv("SP_data_alt.csv", locale = locale(encoding = "ISO-8859-1"))
+
+data <- data|>
+  mutate(dow = str_extract(`Incident Date - Day Name`, "(?<=- )\\w+$"))
+
+
+data|>
+  summarize(across(1:30, ~ sum(is.na(.x))))|>
+  pivot_longer(
+    cols = 1:30,
+    names_to = "feature",
+    values_to = "NA's"
+  )|>
+  view()
+
+
+dates <- data |>
+  mutate(
+    date = mdy_hms(`Incident Date Time`),
+    `mm/yyyy` = format(date, "%m/%Y"),
+    month = my(`mm/yyyy`),
+    season = case_when(
+      month(date) %in% c(12, 1, 2) ~ (year(date) - 2021) * 4 + 1,
+      month(date) %in% c(3, 4, 5) ~ (year(date) - 2021) * 4 + 2,
+      month(date) %in% c(6, 7, 8) ~ (year(date) - 2021) * 4 + 3,
+      month(date) %in% c(9, 10, 11) ~ (year(date) - 2021) * 4 + 4
+    ),
+    season_label = case_when(
+      month(date) %in% c(12, 1, 2) ~ paste("Winter", year(date)),
+      month(date) %in% c(3, 4, 5) ~ paste("Spring", year(date)),
+      month(date) %in% c(6, 7, 8) ~ paste("Summer", year(date)),
+      month(date) %in% c(9, 10, 11) ~ paste("Fall", year(date))
+    )
+  )|>
+    arrange(date)
+
+NAs <- dates|>
+  mutate(across((1:30)[-17], ~ as.integer(!is.na(.x))))|>
+  view()
+
+NAplot <- function(x){
+  p <- NAs |>
+    ggplot(aes(
+      x = `date`,
+      y = .data[[names(NAs)[x]]],
+      color = factor(.data[[names(NAs)[x]]])
+    )) +
+    geom_point()+
+    theme(
+  legend.position = "none")
+
+  print(p)
+  
+}
+NAplot(1)
+NAplot(2)
+NAplot(3)
+NAplot(4)
+NAplot(5)
+NAplot(6)
+NAplot(7)
+NAplot(8)
+NAplot(9)
+NAplot(10)
+NAplot(11)
+NAplot(12)
+NAplot(13)
+NAplot(14)
+NAplot(15)
+NAplot(16)
+NAplot(18)
+NAplot(19)
+NAplot(20)
+NAplot(21)
+NAplot(22)
+NAplot(23)
+NAplot(24)
+NAplot(25)
+NAplot(26)
+NAplot(27)
+NAplot(28)
+NAplot(29)
+
+```

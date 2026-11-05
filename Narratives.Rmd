@@ -1,0 +1,395 @@
+---
+title: "Narratives"
+author: "Sebastian Pantzer"
+date: "2026-10-01"
+output:
+  pdf_document:
+    latex_engine: xelatex
+classoption: landscape
+editor_options: 
+  chunk_output_type: console
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(stringr)
+library(data.table)
+library(patchwork)
+
+```
+
+```{r}
+
+patient_data2 <- read_csv("narratives.csv", locale = locale(encoding = "ISO-8859-1"))
+
+patient_data3 <- read_csv("narratives2.csv", locale = locale(encoding = "ISO-8859-1"))
+
+patient_data2 <- patient_data2 |>
+  select(-(37:39))
+```
+
+```{r, fig.width=14, fig.height=8}
+#patient call and transport volume is empty
+patient_data2 <- patient_data2|>
+  mutate(
+    date = mdy_hms(`Incident Date Time`),
+    `mm/yyyy` = format(date, "%m/%Y"),
+    month = my(`mm/yyyy`),
+    season = case_when(
+      month(date) %in% c(12, 1, 2) ~ (year(date) - 2021) * 4 + 1,
+      month(date) %in% c(3, 4, 5) ~ (year(date) - 2021) * 4 + 2,
+      month(date) %in% c(6, 7, 8) ~ (year(date) - 2021) * 4 + 3,
+      month(date) %in% c(9, 10, 11) ~ (year(date) - 2021) * 4 + 4
+    ),
+    season_label = case_when(
+      month(date) %in% c(12, 1, 2) ~ paste("Winter", year(date)),
+      month(date) %in% c(3, 4, 5) ~ paste("Spring", year(date)),
+      month(date) %in% c(6, 7, 8) ~ paste("Summer", year(date)),
+      month(date) %in% c(9, 10, 11) ~ paste("Fall", year(date))
+    )
+  )
+
+#Mutating call duration features
+#Dispatch -> back in service
+#dispatch -> destination
+patient_data2 <- patient_data2 |>
+  mutate(
+    total_event_duration = difftime( mdy_hms(`Incident Unit Back In Service Date Time (eTimes.13)`), mdy_hms(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`), units = "mins"),
+    dispatch_destination = difftime( mdy_hms(`Incident Patient Arrived At Destination Date Time (eTimes.11)`), mdy_hms(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`), units = "mins")
+  )|>
+    mutate(ready = as.numeric(lubridate::hms(`Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS`),
+                            units = "mins"
+    ))
+
+patient_data2 <- patient_data2 |>
+    mutate(unsched = case_when(
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call/Call-In Transfer)" ~ "Second Call",
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call)"  ~ "Second Call",
+    (`Capability of Unit (eResponse.07)` == "Call Turn Over / Mutual Aid") ~
+      "Turned Over",
+    TRUE ~ "Scheduled"))
+
+patient_data2 <- patient_data2 |>
+  mutate(`EMS Shift (itResponse.005)` = case_when(
+    `EMS Shift (itResponse.005)` == "A" ~ "911 Day",
+    `EMS Shift (itResponse.005)` == "B" ~ "911 Night",
+    `EMS Shift (itResponse.005)` == "Transfer Shift" ~ "Transfer Shift",
+    `EMS Shift (itResponse.005)` == "911 Night" ~ "911 Night",
+    `EMS Shift (itResponse.005)` == "911 Day" ~ "911 Day",
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call/Call-In Transfer)" ~ "No Shift (Second Call/Call-In Transfer)",
+    `EMS Shift (itResponse.005)` == "Event/Standby" ~ "Event/Standby",
+    `EMS Shift (itResponse.005)` == "No Shift (Second Call)" ~ "No Shift (Second Call)"
+  ))
+  
+```
+
+```{r}
+
+patient_data2 |>
+  filter(unsched != "Scheduled") |>
+  select(`EMS Shift (itResponse.005)`, `Capability of Unit (eResponse.07)`, `Response Type Of Service Requested With Code (eResponse.05)`, `Patient Care Report Narrative (eNarrative.01)`)|>
+  view()
+
+#It looks like our classification for turning over is correct
+
+#Let's see if any calls that we didn't classify as turned over are actually turned over
+
+patient_data2 |>
+  filter(unsched == "Scheduled") |>
+  filter(stringr::str_detect(
+    `Patient Care Report Narrative (eNarrative.01)`,
+    stringr::regex("mutual aid", ignore_case = TRUE)
+  ))|>
+    select(`EMS Shift (itResponse.005)`, `Capability of Unit (eResponse.07)`, `Response Type Of Service Requested With Code (eResponse.05)`, `Patient Care Report Narrative (eNarrative.01)`, date)|>
+  view()
+
+patient_data2 |>
+  filter(`Capability of Unit (eResponse.07)` == "Call Turn Over / Mutual Aid") |>
+    select(`EMS Shift (itResponse.005)`, `Capability of Unit (eResponse.07)`, `Response Type Of Service Requested With Code (eResponse.05)`, `Patient Care Report Narrative (eNarrative.01)`, date)|>
+  view()
+  
+patient_data2 |>
+  filter(unsched == "Scheduled") |>
+  filter(stringr::str_detect(
+    `Patient Care Report Narrative (eNarrative.01)`,
+    stringr::regex("mutual aid", ignore_case = TRUE)
+  ))|>
+  slice(2)|>
+  pull(`Patient Care Report Narrative (eNarrative.01)`)
+
+
+patient_data2 |>
+  filter(stringr::str_detect(
+    `Patient Care Report Narrative (eNarrative.01)`,
+    stringr::regex("cancel", ignore_case = TRUE)
+  ))|>
+    select(`EMS Shift (itResponse.005)`, `Capability of Unit (eResponse.07)`, `Response Type Of Service Requested With Code (eResponse.05)`, `Patient Care Report Narrative (eNarrative.01)`, date, total_event_duration)|>
+  filter(total_event_duration >= 0)|>
+  view()
+
+patient_data2 |>
+    select(`EMS Shift (itResponse.005)`, `Capability of Unit (eResponse.07)`, `Response Type Of Service Requested With Code (eResponse.05)`, `Patient Care Report Narrative (eNarrative.01)`, date)|>
+  arrange(date)|>
+  filter(date >= ymd("2025-01-01"))|>
+  view()
+```
+
+```{r}
+observations <- patient_data2 |>
+  select(
+    `EMS Shift (itResponse.005)`,
+    `Capability of Unit (eResponse.07)`,
+    `Response Type Of Service Requested With Code (eResponse.05)`,
+    `Patient Care Report Narrative (eNarrative.01)`,`Dispatch Reason (eDispatch.01)`, `Incident City Name (eScene.17)`,
+    date
+  ) |>
+  arrange(date) |>
+  filter(date >= ymd("2025-01-01"))
+
+con <- file("patient_observations.txt", open = "wt")
+
+for (i in seq_len(nrow(observations))) {
+  writeLines(
+    c(
+      paste("OBSERVATION", i),
+      paste("Date:", observations$date[i]),
+      paste("City Name:", observations[[6]][i]),
+      paste("EMS Shift:", observations[[1]][i]),
+      paste("Unit Capability:", observations[[2]][i]),
+      paste("Response Type:", observations[[3]][i]),
+      paste("Dispatch Reason:", observations[[5]][i]),
+      "Narrative:",
+      observations[[4]][i] %||% "",
+      "\n----------------------------------------\n"
+    ),
+    con
+  )
+}
+
+close(con)
+
+shell.exec(normalizePath("patient_observations.txt"))
+
+```
+
+```{r}
+observations_2 <- patient_data2 |>
+  filter(`Capability of Unit (eResponse.07)` != "Call Turn Over / Mutual Aid") |>
+  filter(stringr::str_detect(
+    `Patient Care Report Narrative (eNarrative.01)`,
+    stringr::regex("cancel", ignore_case = TRUE)
+  ))|>
+  arrange(date) |>
+  filter(date >= ymd("2025-01-01"))
+
+con <- file("patient_observations_MAWS.txt", open = "wt")
+
+for (i in seq_len(nrow(observations_mutual_aid_when_scheduled))) {
+  writeLines(
+    c(
+      paste("OBSERVATION", i),
+      paste("Date:", observations_mutual_aid_when_scheduled$date[i]),
+      paste("City Name:", observations_mutual_aid_when_scheduled$`Incident City Name (eScene.17)`[i]),
+      paste("EMS Shift:", observations_mutual_aid_when_scheduled$`EMS Shift (itResponse.005)`[i]),
+      paste("Unit Capability:", observations_mutual_aid_when_scheduled$ `Capability of Unit (eResponse.07)`[i]),
+      paste("Response Type:", observations_mutual_aid_when_scheduled$`Response Type Of Service Requested With Code (eResponse.05)`[i]),
+      paste("Dispatch Reason:", observations_mutual_aid_when_scheduled$`Dispatch Reason (eDispatch.01)`[i]),
+      "Narrative:",
+      observations_mutual_aid_when_scheduled$`Patient Care Report Narrative (eNarrative.01)`[i] %||% "",
+      "\n----------------------------------------\n"
+    ),
+    con
+  )
+}
+
+close(con)
+
+shell.exec(normalizePath("patient_observations_MAWS.txt"))
+
+```
+
+I'm going to try to use ollama llm to make a new classification from the narratives: Was the unit cancelled?
+```{r}
+library(purrr)
+library(stringr)
+library(ellmer)
+```
+
+```{r}
+
+classify_brs <- function(narrative) {
+
+  if (is.na(narrative) || narrative == "") {
+    return(NA_character_)
+  }
+
+  chat <- chat_ollama(
+    model = "qwen2.5:3b",
+    system_prompt = "You are an EMS dispatch classification system.
+
+TASK:
+Determine whether the original BRS dispatch unit was cancelled.
+
+DEFINITION:
+The BRS dispatch unit is the BRS unit that the narrative is referring to.
+
+IMPORTANT UNIT IDENTIFICATION RULE:
+Do not require the narrative to explicitly say original dispatch unit.
+
+If a BRS unit is named or identified in the narrative and is documented as cancelled, assume it is the original BRS dispatch unit UNLESS the narrative explicitly states that it is a different or additional responding unit.
+
+Do not treat uncertainty about the unit's identity as a reason to answer NO when no evidence of a different unit exists.
+
+CLASSIFICATION RULES:
+
+1. Answer YES when the BRS unit is documented as cancelled, canceled and returned to service, released from the call, told to disregard the response, or given any similar instruction to disengage.
+
+2. If the narrative states that BRS A3 was canceled and returned to service, answer YES.
+
+3. If the narrative states that the original BRS unit cancelled prior to response, answer YES.
+
+4. Answer NO only when:
+   - The narrative explicitly identifies a different unit as the cancelled unit.
+   - The original BRS unit is documented as completing its response without being cancelled.
+   - There is no evidence that the original BRS unit was cancelled.
+
+5. Do not invent additional units, dispatch events, or uncertainty.
+
+6. Do not require additional confirmation that a named BRS unit was the original dispatch unit.
+
+IMPORTANT EXAMPLES:
+
+Example 1:
+Narrative: BRS A3 was canceled and returned to service.
+Classification: YES
+Reason: BRS A3 was documented as canceled and returned to service.
+
+Example 2:
+Narrative: The original BRS unit cancelled prior to response.
+Classification: YES
+Reason: The original BRS unit was documented as cancelling prior to response.
+
+Example 3:
+Narrative: BRS A3 responded to the incident and transported the patient.
+Classification: NO
+Reason: The narrative documents a completed response rather than a cancellation.
+
+Example 4:
+Narrative: A second responding unit was cancelled while BRS A3 continued responding.
+Classification: NO
+Reason: Only the second responding unit was cancelled.
+
+ADDITIONAL EMS DISPATCH TERMINOLOGY:
+
+- Cancelled PTA means the unit was cancelled prior to arrival.
+- Canceled PTA also means the unit was canceled prior to arrival.
+- If a narrative identifies BRS as dispatched for an incident and subsequently states Cancelled PTA by Central Dispatch, classify as YES.
+- The cancellation does not need to repeat the unit's name if the narrative clearly connects the cancellation to the previously mentioned dispatch.
+- Interpret the narrative as a sequence of dispatch events. Connect cancellation statements to the previously identified dispatched unit unless another unit is explicitly identified as the cancelled unit.
+
+IMPORTANT EXAMPLE:
+
+Narrative: BRS Dispatched mutual aid to Middlebury for an MVC. Cancelled PTA by Central Dispatch.
+
+Classification: YES.
+
+Reason: BRS was dispatched for the MVC and subsequently cancelled prior to arrival by Central Dispatch.
+
+OUTPUT:
+Cancellation: YES or NO
+Reason: One sentence citing the specific evidence.
+
+PATIENT CARE REPORT NARRATIVE:
+"
+  )
+
+  response <- chat$chat(narrative)
+
+  return(response)
+}
+```
+
+```{r}
+observations_AI2 <- observations_2 |>
+  slice_head(n = 10)|>
+  mutate(
+    llm_result = map_chr(
+      `Patient Care Report Narrative (eNarrative.01)`,
+      classify_brs
+    )
+  )
+
+observations_AI2 |>
+  select(`Patient Care Report Narrative (eNarrative.01)`, llm_result, `Dispatch Assigned Incident Number (eResponse.03)`)|>
+  view()
+
+classify_brs("BRS Dispatched mutual aid to Middlebury for an MVC. Cancelled PTA by Central Dispatch.")
+
+```
+Ok fuck that. Let's make a DFM
+```{r}
+library(tidytext)
+library(SnowballC)
+dfm <- patient_data2 |>
+  unnest_tokens(input = "Patient Care Report Narrative (eNarrative.01)",
+                output = "Word") |>
+  filter(!(Word %in% stop_words$word)) |>
+  mutate(Word = wordStem(Word),
+         monthCol = month,
+         dateCol = date,
+         seasonCol = season)|>
+  pivot_wider(id_cols = c("Incident Location Type (eScene.09)",
+                          "Dispatch Assigned Incident Number (eResponse.03)",
+                          "Incident Street Address (eScene.15)",
+                          "Dispatch Reason (eDispatch.01)",
+                          "Primary Symptom (eSituation.09)",
+                          "Type of Call (eResponse.05)", 
+                          "Response Type Of Service Requested With Code (eResponse.05)", 
+                          "Capability of Unit (eResponse.07)",
+                          "Agency Name (dAgency.03)",
+                          "Agency Number (dAgency.02)",
+                          "Primary Type Of Service (dAgency.09)",
+                          "Incident Date Time",
+                          "Scene GPS Latitude Encoded (eScene.11)",
+                          "Scene GPS Longitude Encoded (eScene.11)",
+                          "Dispatch Assigned Incident Number (eResponse.03)",
+                          "Response Level Of Care Of This Unit Code (3.4=eResponse.15/3.5=itResponse.115)",
+                          "Incident Dispatch Notified To Unit Arrived On Scene In HHMMSS",
+                          "Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS",
+                          "Incident Unit Arrived At Patient To Patient Arrived At Destination In HHMMSS",
+                          "Incident Unit Arrived On Scene To Patient Arrived At Destination In HHMMSS",
+                          "Incident Date - Day Name",
+                          "Incident City Name (eScene.17)",
+                          "Incident State Name (eScene.18)",
+                          "EMS Shift (itResponse.005)",
+                          "Patient Age In Years (ePatient.15)",
+                          "Patient EMS Patient ID (ePatient.01)",
+                          "Incident Patient Arrived At Destination Date Time (eTimes.11)",
+                          "Incident Dispatch Notified Date Time (eTimes.02)",
+                          "Incident EMS Call Completed Date Time (eTimes.16)" ,
+                          "Incident Unit Notified By Dispatch Date Time (eTimes.03)",
+                          "Incident Unit Back In Service Date Time (eTimes.13)",
+                          "dateCol",
+                          "mm/yyyy",
+                          "monthCol",
+                          "seasonCol",
+                          "season_label",
+                          "total_event_duration",
+                          "dispatch_destination",
+                          "ready",
+                          "unsched"),
+              names_from = "Word",
+              values_from = "Word",
+              values_fn = length,
+              values_fill = 0)
+
+
+pca <- prcomp(dfm|>
+                select(40:13995),scale = TRUE)
+```
