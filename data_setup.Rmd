@@ -155,6 +155,14 @@ master_data <- master_data |>
   mutate(shiftday = case_when(`EMS Shift (itResponse.005)` == "911 Night" ~ if_else(shift == "night2", paste(as_date(date) - days(1), "night"), paste(as_date(date), "night")),
                               TRUE ~ paste(as_date(date), "day")))|>
   select(-shift)
+
+master_data <- master_data |>
+  mutate(
+      `Disposition Destination Full Address` = `Disposition Destination Full Address` |>
+      str_to_upper() |>
+      str_replace_all("[[:punct:]]", " ") |>
+      str_squish()
+  )
 ```
 
 ```{r}
