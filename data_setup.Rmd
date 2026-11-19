@@ -21,13 +21,62 @@ library(patchwork)
 ```
 This is used to set up the data with necessary variables. Can be copied into any markdown.
 ```{r}
+#master data
+master_data <- read_csv("master_data.csv", locale = locale(encoding = "ISO-8859-1"))
+#new pulled data
+#new data should have these columns
+#[1] "Incident Unit En Route Date Time (eTimes.05)"                                  
+#[2] "Incident Unit Arrived On Scene Date Time (eTimes.06)"                          
+#[3] "Incident Location Type (eScene.09)"                                            
+#[4] "Incident Street Address (eScene.15)"                                           
+#[5] "Incident Street Address2 (eScene.15.StreetAddress2)"                           
+#[6] "Dispatch Reason (eDispatch.01)"                                                
+#[7] "Primary Symptom (eSituation.09)"                                               
+#[9] "Response Type Of Service Requested With Code (eResponse.05)"                   
+#[10] "Capability of Unit (eResponse.07)"                                             
+#[11] "Agency Name (dAgency.03)"                                                      
+#[12] "Primary Type Of Service (dAgency.09)"                                          
+#[13] "Incident Date Time"                                                            
+#[14] "Scene GPS Latitude Encoded (eScene.11)"                                        
+#[15] "Scene GPS Longitude Encoded (eScene.11)"                                       
+#[16] "Dispatch Assigned Incident Number (eResponse.03)"                              
+#[17] "Response Level Of Care Of This Unit Code (3.4=eResponse.15/3.5=itResponse.115)"
+#[18] "Incident Patient Arrived At Destination To Unit Back In Service In HHMMSS"     
+#[19] "Incident Unit Arrived At Patient To Patient Arrived At Destination In HHMMSS"  
+#[20] "Incident Unit Arrived On Scene To Patient Arrived At Destination In HHMMSS"    
+#[21] "Incident Date - Day Name"                                                      
+#[22] "Incident City Name (eScene.17)"                                                
+#[23] "Incident State Name (eScene.18)"                                               
+#[24] "EMS Shift (itResponse.005)"                                                    
+#[25] "Patient Age In Years (ePatient.15)"                                            
+#[26] "Patient EMS Patient ID (ePatient.01)"                                          
+#[27] "Incident Patient Arrived At Destination Date Time (eTimes.11)"                 
+#[28] "Incident EMS Call Completed Date Time (eTimes.16)"                             
+#[29] "Incident Unit Notified By Dispatch Date Time (eTimes.03)"                      
+#[30] "Incident Unit Back In Service Date Time (eTimes.13)"                           
+#[31] "Patient Care Report Narrative (eNarrative.01)"                                 
+#[32] "Crew Disposition (3.4=itDisposition.101/3.5=eDisposition.29)"                  
+#[33] "Transport Disposition (3.4=itDisposition.102/3.5=eDisposition.30)"             
+#[34] "Unit Disposition (3.4=itDisposition.099/3.5=eDisposition.27)"
+#[48] "Disposition Destination Type Of Facility"                                      
+#[49] "Disposition Destination Full Address"                                          
+#[50] "Disposition Destination City Name (eDisposition.04)"                           
+#[51] "Initial Patient Acuity (eSituation.13)"                                        
+#[52] "Final Patient Acuity (eDisposition.19)" 
 
-patient_data2 <- read_csv("narratives.csv", locale = locale(encoding = "ISO-8859-1"))git
+new_data <- read_csv("new_data.csv", locale = locale(encoding = "ISO-8859-1"))
+
 ```
 
 ```{r, fig.width=14, fig.height=8}
+master_data <- master_data |>
+  bind_rows(
+    new_data |>
+      anti_join(master_data, by = c("Dispatch Assigned Incident Number (eResponse.03)", "Patient EMS Patient ID (ePatient.01)"))
+  )
+
 #patient call and transport volume is empty
-patient_data2 <- patient_data2|>
+master_data <- master_data|>
   mutate(
     date = mdy_hms(`Incident Date Time`),
     `mm/yyyy` = format(date, "%m/%Y"),
@@ -49,7 +98,7 @@ patient_data2 <- patient_data2|>
 #Mutating call duration features
 #Dispatch -> back in service
 #dispatch -> destination
-patient_data2 <- patient_data2 |>
+master_data <- master_data |>
   mutate(
     total_event_duration = difftime( mdy_hms(`Incident Unit Back In Service Date Time (eTimes.13)`), mdy_hms(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`), units = "mins"),
     dispatch_destination = difftime( mdy_hms(`Incident Patient Arrived At Destination Date Time (eTimes.11)`), mdy_hms(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`), units = "mins")
@@ -58,15 +107,7 @@ patient_data2 <- patient_data2 |>
                             units = "mins"
     ))
 
-patient_data2 <- patient_data2 |>
-    mutate(unsched = case_when(
-    `EMS Shift (itResponse.005)` == "No Shift (Second Call/Call-In Transfer)" ~ "Second Call",
-    `EMS Shift (itResponse.005)` == "No Shift (Second Call)"  ~ "Second Call",
-    (`Capability of Unit (eResponse.07)` == "Call Turn Over / Mutual Aid") & (`Response Type Of Service Requested With Code (eResponse.05)` != "Mutual Aid (2205009)")  ~
-      "Turned Over",
-    TRUE ~ "Scheduled"))
-
-patient_data2 <- patient_data2 |>
+master_data <- master_data |>
   mutate(`EMS Shift (itResponse.005)` = case_when(
     `EMS Shift (itResponse.005)` == "A" ~ "911 Day",
     `EMS Shift (itResponse.005)` == "B" ~ "911 Night",
@@ -77,5 +118,178 @@ patient_data2 <- patient_data2 |>
     `EMS Shift (itResponse.005)` == "Event/Standby" ~ "Event/Standby",
     `EMS Shift (itResponse.005)` == "No Shift (Second Call)" ~ "No Shift (Second Call)"
   ))
-  
+
+master_data <- master_data |>
+  mutate(mutual_aid = case_when(`Incident City Name (eScene.17)` == NA_character_ ~ NA_character_,
+                                (!(`Incident City Name (eScene.17)` %in% c("Monkton Boro",
+                                                                           "Monkton", "New Haven",
+                                                                           "Starksboro",
+                                                                           "Lincoln", "Bristol"))
+                                 & (`Dispatch Reason (eDispatch.01)` != 
+                                      "Transfer / Interfacility / Palliative Care")
+  ) ~ "YES",
+  TRUE ~ "NO"))
+
+master_data <- master_data|>
+  arrange(date)|>
+  mutate(duration_before = lag(total_event_duration),
+         event_before = lag(dispatch_destination),
+         unit_ready_before = lag(ready), 
+         time_between_last_call = difftime(lubridate::mdy_hms(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`), 
+           lubridate::mdy_hms(lag(`Incident Unit Back In Service Date Time (eTimes.13)`)), units = "mins"))
+
+master_data <- master_data |>
+  mutate(date_day = format(date, "%m/%d/%Y"))|>
+  group_by(date_day)|>
+  arrange(date)|>
+  mutate(num_earlier_calls = row_number() - 1,
+         num_calls_day = n())|>
+  ungroup()
+
+master_data <- master_data |>
+  mutate(shift = case_when(
+    is.na(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`) ~ NA_character_,
+    (hour(mdy_hms(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`)) < 12) & (`EMS Shift (itResponse.005)`) == "911 Night" ~ "night2",
+    (hour(mdy_hms(`Incident Unit Notified By Dispatch Date Time (eTimes.03)`)) >= 12) & (`EMS Shift (itResponse.005)`) == "911 Night"~ "night1",
+         TRUE ~ "DAY")) |>
+  mutate(shiftday = case_when(`EMS Shift (itResponse.005)` == "911 Night" ~ if_else(shift == "night2", paste(as_date(date) - days(1), "night"), paste(as_date(date), "night")),
+                              TRUE ~ paste(as_date(date), "day")))|>
+  select(-shift)
+```
+
+```{r}
+brs_prompt <- "You are an EMS dispatch classification system.
+
+## TASK
+Determine what happened to the original BRS dispatch unit based on the patient care report narrative.
+
+Classify each call into exactly ONE of three categories:
+
+1. CANCELLED
+2. TURNED OVER
+3. ENGAGED NORMALLY
+
+## CLASSIFICATION RULES
+
+### 1. CANCELLED
+Classify as CANCELLED when BRS was cancelled, canceled, released from the call, told to disregard the response, or returned to service without completing the call.
+
+This includes:
+- Cancelled or canceled prior to arrival (PTA).
+- Cancelled by Central Dispatch.
+- A named BRS unit being cancelled and returned to service.
+- Any equivalent instruction ending BRS's involvement in the call.
+
+Example:
+BRS A3 was canceled and returned to service.
+Classification: CANCELLED
+
+### 2. TURNED OVER
+Classify as TURNED OVER when BRS was busy, unavailable, unable to respond, or otherwise unable to handle the call, and responsibility was transferred to another agency.
+
+This includes:
+- Calls explicitly turned over or transferred to another agency.
+- Another agency assuming responsibility because BRS was unavailable.
+- BRS being unable to respond and another agency handling the incident.
+
+Example:
+BRS was busy on another call. Call turned over to MREMS.
+Classification: TURNED OVER
+
+BRS was busy on another call. Call sent mutual aid.
+Classification: TURNED OVER
+
+IMPORTANT:
+A turnover is NOT automatically a cancellation. If BRS transfers responsibility because it cannot handle the call, classify as TURNED OVER.
+
+If the narrative states that the call was sent mutual aid, then the call was transferred to another agency.
+
+### 3. ENGAGED NORMALLY
+Classify as ENGAGED NORMALLY when neither cancellation nor turnover applies.
+
+This includes:
+- BRS responding to the incident.
+- BRS assessing or treating a patient.
+- BRS transporting a patient.
+- BRS assisting another agency while remaining involved.
+- Any documented BRS involvement without evidence of cancellation or turnover.
+
+## UNIT IDENTIFICATION RULES
+
+- Do not require the narrative to explicitly identify the original dispatch unit.
+- Assume a named or identified BRS unit refers to the original dispatch unit unless another or additional unit is explicitly identified.
+- Connect cancellation or turnover statements to the previously mentioned BRS dispatch when the narrative describes a sequence of events.
+- For example, BRS dispatched for an MVC. Cancelled PTA by Central Dispatch means CANCELLED.
+- Do not invent additional units, events, or uncertainty.
+
+## CLASSIFICATION PRIORITY
+
+1. Explicit cancellation of BRS = CANCELLED.
+2. BRS unable or unavailable to handle the call and responsibility transferred = TURNED OVER.
+3. Neither condition applies = ENGAGED NORMALLY.
+
+If both cancellation and turnover terminology appear, use the documented outcome. Explicit cancellation takes priority unless the narrative clearly establishes a transfer of responsibility instead.
+
+## OUTPUT FORMAT
+
+Return exactly:
+
+Classification: CANCELLED / TURNED OVER / ENGAGED NORMALLY
+Reason: One concise sentence citing the specific evidence.
+
+Do not provide additional commentary or speculation.
+
+PATIENT CARE REPORT NARRATIVE:
+"
+```
+
+```{r}
+# Create the chat configuration
+brs_chat <- chat_ollama(
+  model = "qwen3.5:9b",
+  system_prompt = brs_prompt,
+  params = params(
+    reasoning_effort = "none",
+    max_tokens = 100,
+    temperature = 0
+  )
+)
+
+# Classification function
+classify_brs <- function(narrative) {
+
+  if (is.na(narrative) || narrative == "") {
+    return(NA_character_)
+  }
+  # Create a clean conversation with no previous narratives
+  chat1 <- brs_chat$clone()$set_turns(list())
+
+  response <- chat1$chat(narrative)
+
+  return(response)
+}
+
+master_data <- master_data |>
+  mutate(
+    llm_result = map2_chr(
+      `Patient Care Report Narrative (eNarrative.01)`,
+      llm_result,
+      \(narrative, result) {
+        if (is.na(result)) {
+          classify_brs(narrative)
+        } else {
+          result
+        }
+      }
+    )
+  )
+
+master_data <- master_data |>
+  mutate(
+    classification = str_extract(llm_result, "(?<=Classification: )(CANCELLED|TURNED OVER|ENGAGED NORMALLY)")
+  )
+```
+
+```{r}
+write.csv(master_data, "master_data.csv", row.names = FALSE)
 ```
